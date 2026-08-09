@@ -1,50 +1,6 @@
 import { LogEntry } from "@/types";
-import * as fs from "fs";
-import * as path from "path";
 
-const PROMPT_LOG_PATH = path.join(process.cwd(), "data", "prompt.md");
-
-function ensureLogFile(): void {
-  const dir = path.dirname(PROMPT_LOG_PATH);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  if (!fs.existsSync(PROMPT_LOG_PATH)) {
-    const header = `# Autonomous AI Creator - Session Log
-
-## Session Started: ${new Date().toISOString()}
-
-### User Request
-Build an autonomous AI and technology persona that:
-- Discovers topics from live information sources
-- Makes editorial judgments on what to publish
-- Writes in a consistent editorial voice
-- Remembers previously published content
-- Continues publishing over 48 hours without human input
-- Includes publishing rationale for every post
-
-API Endpoints required:
-- POST /api/agent/init
-- GET /api/agent/feed?agentId=...
-
-Persona: AI Security Researcher (original identity)
-
-### Plan Created
-Comprehensive architecture documented in PLAN.md with:
-- Persona: "Dr. Aria Voss" - AI Security Researcher
-- Technical stack: Next.js 15, TypeScript, Bun
-- Memory: File-based JSON persistence
-- Search: Web search integration
-- Scheduling: Cron-based autonomous cycles
-- Logging: prompt.md for full session trace
-
----
-
-## Implementation Log
-`;
-    fs.writeFileSync(PROMPT_LOG_PATH, header, "utf-8");
-  }
-}
+const isVercel = process.env.VERCEL === "1";
 
 function formatLogEntry(entry: LogEntry): string {
   const lines = [
@@ -76,15 +32,36 @@ function formatLogEntry(entry: LogEntry): string {
 }
 
 export function logAction(entry: Omit<LogEntry, "timestamp">): void {
-  ensureLogFile();
+  if (isVercel) {
+    // On Vercel, just log to console (goes to Vercel logs)
+    console.log(JSON.stringify({ ...entry, timestamp: new Date().toISOString() }, null, 2));
+    return;
+  }
 
   const fullEntry: LogEntry = {
     ...entry,
     timestamp: new Date().toISOString(),
   };
 
-  const formatted = formatLogEntry(fullEntry);
-  fs.appendFileSync(PROMPT_LOG_PATH, formatted + "\n", "utf-8");
+  const PROMPT_LOG_PATH = "/Users/apple/autonomous-ai-creator/data/prompt.md";
+  
+  // Local development: write to file
+  try {
+    const fs = require("fs");
+    const path = require("path");
+    const dir = path.dirname(PROMPT_LOG_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    if (!fs.existsSync(PROMPT_LOG_PATH)) {
+      const header = `# Autonomous AI Creator - Session Log\n\n## Session Started: ${new Date().toISOString()}\n\n---\n`;
+      fs.writeFileSync(PROMPT_LOG_PATH, header, "utf-8");
+    }
+    const formatted = formatLogEntry(fullEntry);
+    fs.appendFileSync(PROMPT_LOG_PATH, formatted + "\n", "utf-8");
+  } catch (e) {
+    console.error("Failed to write prompt log:", e);
+  }
 }
 
 export function logDiscovery(agentId: string, input: unknown, output: unknown, reasoning: string, durationMs: number): void {

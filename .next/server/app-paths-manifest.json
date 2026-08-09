@@ -1,7 +1,1 @@
-{
-  "/_not-found/page": "app/_not-found/page.js",
-  "/api/cron/route": "app/api/cron/route.js",
-  "/api/agent/feed/route": "app/api/agent/feed/route.js",
-  "/page": "app/page.js",
-  "/api/agent/init/route": "app/api/agent/init/route.js"
-}
+{}
