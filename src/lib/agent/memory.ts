@@ -1,4 +1,3 @@
-import { Redis } from "@upstash/redis";
 import * as fs from "fs";
 import * as path from "path";
 import {
@@ -14,14 +13,15 @@ import {
 import { ARIA_VOSS_PERSONA, AGENT_CONFIG } from "./persona";
 import { generateAgentId, generatePostId, generateTopicId } from "@/lib/utils/id-generator";
 
-const isDev = process.env.NODE_ENV === "development";
+const isVercel = !!process.env.VERCEL;
 const hasRedis = !!process.env.UPSTASH_REDIS_REST_URL && !!process.env.UPSTASH_REDIS_REST_TOKEN;
+const isDemoMode = isVercel && !hasRedis;
 
-const redis = hasRedis ? new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-}) : null;
+// In-memory store for demo mode (doesn't persist between invocations)
+const demoMemoryStore = new Map<string, AgentMemory>();
+const demoAgentsIndex = new Set<string>();
 
+// File-based storage for local development
 const DATA_DIR = path.join(process.cwd(), "data", "agents");
 
 function ensureDataDir(): void {
@@ -35,12 +35,23 @@ function getAgentFilePath(agentId: string): string {
 }
 
 async function getAgentMemory(agentId: string): Promise<AgentMemory | null> {
-  if (hasRedis && redis) {
+  // Demo mode: use in-memory store
+  if (isDemoMode) {
+    return demoMemoryStore.get(agentId) || null;
+  }
+  
+  // Redis mode
+  if (hasRedis) {
+    const { Redis } = await import("@upstash/redis");
+    const redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL!,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+    });
     const data = await redis.get(`agent:${agentId}`);
     return data as AgentMemory | null;
   }
   
-  // File-based fallback for local dev
+  // Local file-based mode
   ensureDataDir();
   const filePath = getAgentFilePath(agentId);
   if (!fs.existsSync(filePath)) return null;
@@ -53,25 +64,46 @@ async function getAgentMemory(agentId: string): Promise<AgentMemory | null> {
 }
 
 async function setAgentMemory(memory: AgentMemory): Promise<void> {
-  if (hasRedis && redis) {
+  // Demo mode: use in-memory store
+  if (isDemoMode) {
+    demoMemoryStore.set(memory.agentId, memory);
+    demoAgentsIndex.add(memory.agentId);
+    return;
+  }
+  
+  // Redis mode
+  if (hasRedis) {
+    const { Redis } = await import("@upstash/redis");
+    const redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL!,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+    });
     await redis.set(`agent:${memory.agentId}`, JSON.stringify(memory));
     await redis.sadd("agents:index", memory.agentId);
     return;
   }
   
-  // File-based fallback for local dev
+  // Local file-based mode
   ensureDataDir();
   const filePath = getAgentFilePath(memory.agentId);
   fs.writeFileSync(filePath, JSON.stringify(memory, null, 2), "utf-8");
 }
 
 async function listAgentIds(): Promise<string[]> {
-  if (hasRedis && redis) {
+  if (isDemoMode) {
+    return Array.from(demoAgentsIndex);
+  }
+  
+  if (hasRedis) {
+    const { Redis } = await import("@upstash/redis");
+    const redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL!,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+    });
     const agents = await redis.smembers("agents:index");
     return (agents as string[]) || [];
   }
   
-  // File-based fallback for local dev
   ensureDataDir();
   return fs.readdirSync(DATA_DIR)
     .filter(f => f.endsWith(".json"))
@@ -133,6 +165,11 @@ export async function createAgentMemory(personaOverrides?: Partial<PersonaConfig
   };
 
   await setAgentMemory(memory);
+  
+  if (isDemoMode) {
+    console.log(`🎭 Demo mode: Agent ${agentId} created (in-memory, non-persistent)`);
+  }
+  
   return memory;
 }
 
