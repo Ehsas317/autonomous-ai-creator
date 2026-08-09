@@ -1,4 +1,6 @@
 import { Redis } from "@upstash/redis";
+import * as fs from "fs";
+import * as path from "path";
 import {
   AgentMemory,
   PersonaConfig,
@@ -12,6 +14,7 @@ import {
 import { ARIA_VOSS_PERSONA, AGENT_CONFIG } from "./persona";
 import { generateAgentId, generatePostId, generateTopicId } from "@/lib/utils/id-generator";
 
+const isDev = process.env.NODE_ENV === "development";
 const hasRedis = !!process.env.UPSTASH_REDIS_REST_URL && !!process.env.UPSTASH_REDIS_REST_TOKEN;
 
 const redis = hasRedis ? new Redis({
@@ -19,29 +22,60 @@ const redis = hasRedis ? new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 }) : null;
 
-const AGENT_KEY = (agentId: string) => `agent:${agentId}`;
-const AGENTS_INDEX_KEY = "agents:index";
+const DATA_DIR = path.join(process.cwd(), "data", "agents");
 
-function requireRedis(): Redis {
-  if (!hasRedis || !redis) {
-    throw new Error(
-      "Upstash Redis not configured. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN environment variables. " +
-      "Create a free database at https://console.upstash.com"
-    );
+function ensureDataDir(): void {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
   }
-  return redis;
+}
+
+function getAgentFilePath(agentId: string): string {
+  return path.join(DATA_DIR, `${agentId}.json`);
 }
 
 async function getAgentMemory(agentId: string): Promise<AgentMemory | null> {
-  const client = requireRedis();
-  const data = await client.get(AGENT_KEY(agentId));
-  return data as AgentMemory | null;
+  if (hasRedis && redis) {
+    const data = await redis.get(`agent:${agentId}`);
+    return data as AgentMemory | null;
+  }
+  
+  // File-based fallback for local dev
+  ensureDataDir();
+  const filePath = getAgentFilePath(agentId);
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    const data = fs.readFileSync(filePath, "utf-8");
+    return JSON.parse(data) as AgentMemory;
+  } catch {
+    return null;
+  }
 }
 
 async function setAgentMemory(memory: AgentMemory): Promise<void> {
-  const client = requireRedis();
-  await client.set(AGENT_KEY(memory.agentId), JSON.stringify(memory));
-  await client.sadd(AGENTS_INDEX_KEY, memory.agentId);
+  if (hasRedis && redis) {
+    await redis.set(`agent:${memory.agentId}`, JSON.stringify(memory));
+    await redis.sadd("agents:index", memory.agentId);
+    return;
+  }
+  
+  // File-based fallback for local dev
+  ensureDataDir();
+  const filePath = getAgentFilePath(memory.agentId);
+  fs.writeFileSync(filePath, JSON.stringify(memory, null, 2), "utf-8");
+}
+
+async function listAgentIds(): Promise<string[]> {
+  if (hasRedis && redis) {
+    const agents = await redis.smembers("agents:index");
+    return (agents as string[]) || [];
+  }
+  
+  // File-based fallback for local dev
+  ensureDataDir();
+  return fs.readdirSync(DATA_DIR)
+    .filter(f => f.endsWith(".json"))
+    .map(f => f.replace(".json", ""));
 }
 
 export async function createAgentMemory(personaOverrides?: Partial<PersonaConfig>): Promise<AgentMemory> {
@@ -192,8 +226,4 @@ export async function getAgentConfig(agentId: string): Promise<{ persona: Person
   return { persona: memory.persona, config: memory.config };
 }
 
-export async function listAgentIds(): Promise<string[]> {
-  const client = requireRedis();
-  const agents = await client.smembers(AGENTS_INDEX_KEY);
-  return (agents as string[]) || [];
-}
+export { listAgentIds };
