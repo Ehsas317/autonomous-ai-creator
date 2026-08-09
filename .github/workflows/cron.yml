@@ -5,15 +5,47 @@ on:
     - cron: '0 */3 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   run-autonomous-cycle:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger autonomous cycle
-        run: |
-          curl -X GET "${{ secrets.VERCEL_URL }}/api/cron" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            -H "Content-Type: application/json" \
-            -v
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run autonomous cycle
         env:
-          VERCEL_URL: https://autonomous-ai-creator-ebon.vercel.app
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTIONS: 'true'
+        run: |
+          npx tsx -e "
+          import { runAllAgentsCycle } from './src/lib/agent/scheduler.ts';
+          await runAllAgentsCycle();
+          console.log('Cycle complete');
+          "
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/agents/
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update agent states after autonomous cycle"
+            git push
+          else
+            echo "No changes to commit"
+          fi
