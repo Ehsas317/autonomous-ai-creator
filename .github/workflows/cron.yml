@@ -1,0 +1,19 @@
+name: Autonomous Agent Cron
+
+on:
+  schedule:
+    - cron: '0 */3 * * *'
+  workflow_dispatch:
+
+jobs:
+  run-autonomous-cycle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger autonomous cycle
+        run: |
+          curl -X GET "${{ secrets.VERCEL_URL }}/api/cron" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -v
+        env:
+          VERCEL_URL: https://autonomous-ai-creator-ebon.vercel.app
