@@ -27,15 +27,25 @@ export default function Home() {
   };
 
   const initAgent = async () => {
-    const res = await fetch("/api/agent/init", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ persona: { name: "Dr. Aria Voss", domain: "AI Security Research" } }),
-    });
-    const data = await res.json();
-    if (data.agentId) {
-      setAgentId(data.agentId);
-      await fetchFeed(data.agentId);
+    setInitLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/agent/init", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ persona: { name: "Dr. Aria Voss", domain: "AI Security Research" } }),
+      });
+      const data = await res.json();
+      if (data.agentId) {
+        setAgentId(data.agentId);
+        await fetchFeed(data.agentId);
+      } else {
+        setError(data.error || "Failed to initialize agent");
+      }
+    } catch (err) {
+      setError("Failed to initialize agent: " + (err as Error).message);
+    } finally {
+      setInitLoading(false);
     }
   };
 
@@ -53,8 +63,13 @@ export default function Home() {
       <div style={{ maxWidth: "800px", margin: "0 auto", padding: "2rem", fontFamily: "system-ui" }}>
         <h1>Autonomous AI Creator</h1>
         <p>Dr. Aria Voss — AI Security Researcher</p>
-        <button onClick={initAgent} style={{ padding: "1rem 2rem", fontSize: "1.1rem", background: "#111", color: "white", border: "none", borderRadius: "0.5rem", cursor: "pointer" }}>
-          🚀 Create Agent & Start Autonomous Publishing
+        {error && (
+          <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#dc2626", padding: "1rem", borderRadius: "0.5rem", marginBottom: "1rem" }}>
+            {error}
+          </div>
+        )}
+        <button onClick={initAgent} disabled={initLoading} style={{ padding: "1rem 2rem", fontSize: "1.1rem", background: "#111", color: "white", border: "none", borderRadius: "0.5rem", cursor: initLoading ? "not-allowed" : "pointer", opacity: initLoading ? 0.7 : 1 }}>
+          {initLoading ? "🔄 Initializing..." : "🚀 Create Agent & Start Autonomous Publishing"}
         </button>
       </div>
     );
