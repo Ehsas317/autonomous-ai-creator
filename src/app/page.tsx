@@ -9,15 +9,27 @@ export default function Home() {
   const [initLoading, setInitLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [cycling, setCycling] = useState(false);
+  const [lastSync, setLastSync] = useState<Date | null>(null);
 
   const fetchFeed = async (id: string) => {
+    if (!id) return;
     setLoading(true);
+    setError(null);
     try {
-      const r = await fetch(`/api/agent/feed?agentId=${id}`);
+      const r = await fetch(`/api/agent/feed?agentId=${id}`, { cache: "no-store" });
       const d = await r.json();
-      if (d.posts) setPosts(d.posts);
-    } catch (e) { setError(String(e)); }
-    setLoading(false);
+      if (d.posts) {
+        setPosts(d.posts);
+        setLastSync(new Date());
+      } else {
+        setError(d.error || "No posts returned");
+      }
+    } catch (e) {
+      setError("Refresh failed: " + String(e));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const init = async () => {
@@ -36,9 +48,24 @@ export default function Home() {
   };
 
   const cycle = async () => {
-    setLoading(true);
-    await fetch("/api/cron", { headers: { Authorization: "Bearer my-secret-123" } });
-    await fetchFeed(agentId);
+    if (!agentId) return;
+    setCycling(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/cron", {
+        headers: { Authorization: "Bearer my-secret-123" },
+        cache: "no-store",
+      });
+      const d = await r.json();
+      if (!d.success) {
+        setError(d.error || "Cycle failed");
+      }
+      await fetchFeed(agentId);
+    } catch (e) {
+      setError("Cycle failed: " + String(e));
+    } finally {
+      setCycling(false);
+    }
   };
 
   useEffect(() => {
@@ -108,8 +135,12 @@ export default function Home() {
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => fetchFeed(agentId)} disabled={loading} style={btn("#1e293b", "#e2e8f0")}>{loading ? "⏳" : "🔄"} Refresh</button>
-            <button onClick={cycle} disabled={loading} style={btn("linear-gradient(135deg,#10b981,#059669)", "#fff")}>⚡ Run Cycle</button>
+            <button onClick={() => fetchFeed(agentId)} disabled={loading || cycling} style={{ ...btn("#1e293b", "#e2e8f0"), opacity: loading || cycling ? 0.5 : 1, cursor: loading || cycling ? "not-allowed" : "pointer" }}>
+              {loading ? "⏳ Loading..." : "🔄 Refresh"}
+            </button>
+            <button onClick={cycle} disabled={loading || cycling} style={{ ...btn("linear-gradient(135deg,#10b981,#059669)", "#fff"), opacity: loading || cycling ? 0.5 : 1, cursor: loading || cycling ? "not-allowed" : "pointer" }}>
+              {cycling ? "⚡ Running..." : "⚡ Run Cycle"}
+            </button>
           </div>
         </header>
 
@@ -123,18 +154,27 @@ export default function Home() {
           </div>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24, fontSize: 12, color: "#64748b" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, fontSize: 12, color: "#64748b", flexWrap: "wrap" }}>
           <span>Agent</span>
           <code style={{ background: "rgba(255,255,255,0.05)", padding: "4px 10px", borderRadius: 6, color: "#94a3b8", fontSize: 11 }}>{agentId}</code>
           <button onClick={() => navigator.clipboard.writeText(agentId)} style={{ background: "none", border: "none", color: "#3b82f6", cursor: "pointer", fontSize: 12 }}>copy</button>
+          {lastSync && <span style={{ marginLeft: "auto" }}>synced {lastSync.toLocaleTimeString()}</span>}
         </div>
+
+        {error && (
+          <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", color: "#fca5a5", padding: "12px 16px", borderRadius: 12, marginBottom: 20, fontSize: 13, display: "flex", alignItems: "center", gap: 10 }}>
+            <span>⚠️</span>
+            <span style={{ flex: 1 }}>{error}</span>
+            <button onClick={() => setError(null)} style={{ background: "none", border: "none", color: "#fca5a5", cursor: "pointer", fontSize: 16 }}>×</button>
+          </div>
+        )}
 
         {posts.length === 0 ? (
           <div style={{ textAlign: "center", padding: "80px 20px", background: "rgba(255,255,255,0.02)", borderRadius: 20, border: "1px dashed rgba(255,255,255,0.1)" }}>
             <div style={{ fontSize: 56, marginBottom: 20, opacity: 0.5 }}>📭</div>
             <h3 style={{ color: "#fff", fontSize: 20, margin: "0 0 8px" }}>No posts yet</h3>
             <p style={{ color: "#64748b", fontSize: 14, margin: "0 0 24px" }}>Agent runs every 3 hours. Trigger a cycle manually.</p>
-            <button onClick={cycle} style={btn("linear-gradient(135deg,#3b82f6,#8b5cf6)", "#fff")}>⚡ Run First Cycle</button>
+            <button onClick={cycle} disabled={cycling} style={{ ...btn("linear-gradient(135deg,#3b82f6,#8b5cf6)", "#fff"), opacity: cycling ? 0.5 : 1 }}>{cycling ? "⚡ Running..." : "⚡ Run First Cycle"}</button>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
