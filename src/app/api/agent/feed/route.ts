@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loadAgentMemory } from "@/lib/agent/memory";
+import { loadAgentMemory, getPublishedPosts } from "@/lib/agent/memory";
 import { FeedResponse } from "@/types";
 import { logApiCall } from "@/lib/utils/logger";
 
@@ -17,7 +17,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<FeedRespon
       );
     }
 
-    const memory = loadAgentMemory(agentId);
+    const memory = await loadAgentMemory(agentId);
 
     if (!memory) {
       return NextResponse.json(

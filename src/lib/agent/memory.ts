@@ -1,5 +1,4 @@
-import * as fs from "fs";
-import * as path from "path";
+import { Redis } from "@upstash/redis";
 import {
   AgentMemory,
   PersonaConfig,
@@ -11,46 +10,30 @@ import {
   AgentStats,
 } from "@/types";
 import { ARIA_VOSS_PERSONA, AGENT_CONFIG } from "./persona";
-import { generateAgentId } from "@/lib/utils/id-generator";
+import { generateAgentId, generatePostId, generateTopicId } from "@/lib/utils/id-generator";
 
-const DATA_DIR = path.join(process.cwd(), "data", "agents");
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
 
-function ensureDataDir(): void {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
+const AGENT_KEY = (agentId: string) => `agent:${agentId}`;
+const AGENTS_INDEX_KEY = "agents:index";
+
+async function getAgentMemory(agentId: string): Promise<AgentMemory | null> {
+  const data = await redis.get(AGENT_KEY(agentId));
+  return data as AgentMemory | null;
 }
 
-function getAgentDir(agentId: string): string {
-  return path.join(DATA_DIR, agentId);
+async function setAgentMemory(memory: AgentMemory): Promise<void> {
+  await redis.set(AGENT_KEY(memory.agentId), JSON.stringify(memory));
+  // Add to index
+  await redis.sadd(AGENTS_INDEX_KEY, memory.agentId);
 }
 
-function getMemoryPath(agentId: string): string {
-  return path.join(getAgentDir(agentId), "memory.json");
-}
-
-function getPostsPath(agentId: string): string {
-  return path.join(getAgentDir(agentId), "posts.json");
-}
-
-function getConfigPath(agentId: string): string {
-  return path.join(getAgentDir(agentId), "config.json");
-}
-
-function atomicWrite(filePath: string, data: unknown): void {
-  const tempPath = `${filePath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), "utf-8");
-  fs.renameSync(tempPath, filePath);
-}
-
-export function createAgentMemory(personaOverrides?: Partial<PersonaConfig>): AgentMemory {
+export async function createAgentMemory(personaOverrides?: Partial<PersonaConfig>): Promise<AgentMemory> {
   const agentId = generateAgentId();
-  const agentDir = getAgentDir(agentId);
   
-  if (!fs.existsSync(agentDir)) {
-    fs.mkdirSync(agentDir, { recursive: true });
-  }
-
   const persona: PersonaConfig = {
     ...ARIA_VOSS_PERSONA,
     ...personaOverrides,
@@ -102,45 +85,26 @@ export function createAgentMemory(personaOverrides?: Partial<PersonaConfig>): Ag
     stats,
   };
 
-  atomicWrite(getMemoryPath(agentId), memory);
-  atomicWrite(getPostsPath(agentId), []);
-  atomicWrite(getConfigPath(agentId), { persona, config });
-
+  await setAgentMemory(memory);
   return memory;
 }
 
-export function loadAgentMemory(agentId: string): AgentMemory | null {
-  const memoryPath = getMemoryPath(agentId);
-  if (!fs.existsSync(memoryPath)) {
-    return null;
-  }
-
-  try {
-    const data = fs.readFileSync(memoryPath, "utf-8");
-    return JSON.parse(data) as AgentMemory;
-  } catch {
-    return null;
-  }
+export async function loadAgentMemory(agentId: string): Promise<AgentMemory | null> {
+  return getAgentMemory(agentId);
 }
 
-export function saveAgentMemory(memory: AgentMemory): void {
-  ensureDataDir();
-  const agentDir = getAgentDir(memory.agentId);
-  if (!fs.existsSync(agentDir)) {
-    fs.mkdirSync(agentDir, { recursive: true });
-  }
-  atomicWrite(getMemoryPath(memory.agentId), memory);
+export async function saveAgentMemory(memory: AgentMemory): Promise<void> {
+  await setAgentMemory(memory);
 }
 
-export function addPublishedPost(agentId: string, post: PublishedPost): void {
-  const memory = loadAgentMemory(agentId);
+export async function addPublishedPost(agentId: string, post: PublishedPost): Promise<void> {
+  const memory = await loadAgentMemory(agentId);
   if (!memory) throw new Error(`Agent ${agentId} not found`);
 
-  memory.publishedPosts.unshift(post); // Newest first
+  memory.publishedPosts.unshift(post);
   memory.stats.totalPublished++;
   memory.stats.lastActiveAt = new Date().toISOString();
   
-  // Update covered topics
   const topicWords = post.candidate.title
     .toLowerCase()
     .split(/\s+/)
@@ -148,84 +112,74 @@ export function addPublishedPost(agentId: string, post: PublishedPost): void {
   memory.preferences.coveredTopics.push(...topicWords);
   memory.preferences.coveredTopics = [...new Set(memory.preferences.coveredTopics)].slice(-100);
 
-  saveAgentMemory(memory);
+  await saveAgentMemory(memory);
 }
 
-export function addRejectedTopic(agentId: string, rejected: RejectedTopic): void {
-  const memory = loadAgentMemory(agentId);
+export async function addRejectedTopic(agentId: string, rejected: RejectedTopic): Promise<void> {
+  const memory = await loadAgentMemory(agentId);
   if (!memory) throw new Error(`Agent ${agentId} not found`);
 
   memory.rejectedTopics.unshift(rejected);
   memory.stats.totalRejected++;
   memory.stats.lastActiveAt = new Date().toISOString();
 
-  saveAgentMemory(memory);
+  await saveAgentMemory(memory);
 }
 
-export function addDiscoveredCandidates(agentId: string, candidates: TopicCandidate[]): void {
-  const memory = loadAgentMemory(agentId);
+export async function addDiscoveredCandidates(agentId: string, candidates: TopicCandidate[]): Promise<void> {
+  const memory = await loadAgentMemory(agentId);
   if (!memory) throw new Error(`Agent ${agentId} not found`);
 
-  // Deduplicate by URL
   const existingUrls = new Set(memory.discoveredCandidates.map((c) => c.url));
   const newCandidates = candidates.filter((c) => !existingUrls.has(c.url));
 
   memory.discoveredCandidates.unshift(...newCandidates);
-  // Keep only last 500 candidates
   memory.discoveredCandidates = memory.discoveredCandidates.slice(0, 500);
   memory.stats.totalDiscovered += newCandidates.length;
   memory.lastDiscoveryRun = new Date().toISOString();
   memory.stats.lastActiveAt = new Date().toISOString();
 
-  saveAgentMemory(memory);
+  await saveAgentMemory(memory);
 }
 
-export function updateLastJudgmentRun(agentId: string): void {
-  const memory = loadAgentMemory(agentId);
+export async function updateLastJudgmentRun(agentId: string): Promise<void> {
+  const memory = await loadAgentMemory(agentId);
   if (!memory) return;
   memory.lastJudgmentRun = new Date().toISOString();
   memory.stats.lastActiveAt = new Date().toISOString();
-  saveAgentMemory(memory);
+  await saveAgentMemory(memory);
 }
 
-export function updateLastPublishRun(agentId: string): void {
-  const memory = loadAgentMemory(agentId);
+export async function updateLastPublishRun(agentId: string): Promise<void> {
+  const memory = await loadAgentMemory(agentId);
   if (!memory) return;
   memory.lastPublishRun = new Date().toISOString();
   memory.stats.lastActiveAt = new Date().toISOString();
-  saveAgentMemory(memory);
+  await saveAgentMemory(memory);
 }
 
-export function getPublishedPosts(agentId: string): PublishedPost[] {
-  const memory = loadAgentMemory(agentId);
+export async function getPublishedPosts(agentId: string): Promise<PublishedPost[]> {
+  const memory = await loadAgentMemory(agentId);
   return memory?.publishedPosts ?? [];
 }
 
-export function getRejectedTopics(agentId: string): RejectedTopic[] {
-  const memory = loadAgentMemory(agentId);
+export async function getRejectedTopics(agentId: string): Promise<RejectedTopic[]> {
+  const memory = await loadAgentMemory(agentId);
   return memory?.rejectedTopics ?? [];
 }
 
-export function getDiscoveredCandidates(agentId: string): TopicCandidate[] {
-  const memory = loadAgentMemory(agentId);
+export async function getDiscoveredCandidates(agentId: string): Promise<TopicCandidate[]> {
+  const memory = await loadAgentMemory(agentId);
   return memory?.discoveredCandidates ?? [];
 }
 
-export function getAgentConfig(agentId: string): { persona: PersonaConfig; config: AgentConfig } | null {
-  const configPath = getConfigPath(agentId);
-  if (!fs.existsSync(configPath)) return null;
-  try {
-    const data = fs.readFileSync(configPath, "utf-8");
-    return JSON.parse(data);
-  } catch {
-    return null;
-  }
+export async function getAgentConfig(agentId: string): Promise<{ persona: PersonaConfig; config: AgentConfig } | null> {
+  const memory = await loadAgentMemory(agentId);
+  if (!memory) return null;
+  return { persona: memory.persona, config: memory.config };
 }
 
-export function listAgentIds(): string[] {
-  ensureDataDir();
-  return fs.readdirSync(DATA_DIR).filter((name) => {
-    const fullPath = path.join(DATA_DIR, name);
-    return fs.statSync(fullPath).isDirectory();
-  });
+export async function listAgentIds(): Promise<string[]> {
+  const agents = await redis.smembers(AGENTS_INDEX_KEY);
+  return (agents as string[]) || [];
 }

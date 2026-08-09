@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAgentMemory } from "@/lib/agent/memory";
-import { startAgentScheduler } from "@/lib/agent/scheduler";
+import { runInitialCycle } from "@/lib/agent/scheduler";
 import { InitRequest, InitResponse } from "@/types";
 import { logApiCall } from "@/lib/utils/logger";
 
@@ -17,17 +17,17 @@ export async function POST(request: NextRequest): Promise<NextResponse<InitRespo
       );
     }
 
-    const memory = createAgentMemory({
+    const memory = await createAgentMemory({
       name: body.persona.name,
       domain: body.persona.domain,
     });
 
-    // Start the autonomous scheduler
-    startAgentScheduler(memory.agentId);
+    // Run initial autonomous cycle
+    await runInitialCycle(memory.agentId);
 
     const response: InitResponse = { agentId: memory.agentId };
 
-    logApiCall(memory.agentId, body, response, "Agent initialized and scheduler started", Date.now() - startTime);
+    logApiCall(memory.agentId, body, response, "Agent initialized and initial cycle completed", Date.now() - startTime);
 
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
