@@ -1,5 +1,4 @@
-import * as fs from "fs";
-import * as path from "path";
+import { Redis } from "@upstash/redis";
 import {
   AgentMemory,
   PersonaConfig,
@@ -13,137 +12,22 @@ import {
 import { ARIA_VOSS_PERSONA, AGENT_CONFIG } from "./persona";
 import { generateAgentId, generatePostId, generateTopicId } from "@/lib/utils/id-generator";
 
-const REPO_OWNER = "Ehsas317";
-const REPO_NAME = "autonomous-ai-creator";
-const BRANCH = "main";
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
 
-const DATA_DIR = path.join(process.cwd(), "data", "agents");
-
-function ensureDataDir(): void {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-}
-
-function getAgentFilePath(agentId: string): string {
-  return path.join(DATA_DIR, `${agentId}.json`);
-}
-
-const GITHUB_API = "https://api.github.com";
-const RAW_GITHUB = "https://raw.githubusercontent.com";
-
-async function githubRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
-  if (!GITHUB_TOKEN) {
-    throw new Error("GITHUB_TOKEN not configured");
-  }
-  const res = await fetch(`${GITHUB_API}${endpoint}`, {
-    ...options,
-    headers: {
-      "Authorization": `Bearer ${GITHUB_TOKEN}`,
-      "Accept": "application/vnd.github.v3+json",
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`GitHub API error: ${res.status} ${text}`);
-  }
-  return res.json();
-}
-
-async function readAgentFromGitHub(agentId: string): Promise<AgentMemory | null> {
-  try {
-    const url = `${RAW_GITHUB}/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/data/agents/${agentId}.json`;
-    const res = await fetch(url, { headers: { "Accept": "application/json" } });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
-async function writeAgentToGitHub(memory: AgentMemory): Promise<void> {
-  const filePath = `data/agents/${memory.agentId}.json`;
-  const content = Buffer.from(JSON.stringify(memory, null, 2)).toString("base64");
-
-  // Get current file SHA if exists
-  let sha: string | undefined;
-  try {
-    const existing = await githubRequest(`/repos/${REPO_OWNER}/${REPO_NAME}/contents/${filePath}?ref=${BRANCH}`);
-    sha = existing.sha;
-  } catch {
-    // File doesn't exist
-  }
-
-  await githubRequest(`/repos/${REPO_OWNER}/${REPO_NAME}/contents/${filePath}`, {
-    method: "PUT",
-    body: JSON.stringify({
-      message: `chore: update agent ${memory.agentId} state`,
-      content,
-      branch: BRANCH,
-      ...(sha && { sha }),
-    }),
-  });
-}
-
-// Local file fallback for development
-async function readAgentLocal(agentId: string): Promise<AgentMemory | null> {
-  ensureDataDir();
-  const filePath = getAgentFilePath(agentId);
-  if (!fs.existsSync(filePath)) return null;
-  try {
-    const data = fs.readFileSync(filePath, "utf-8");
-    return JSON.parse(data) as AgentMemory;
-  } catch {
-    return null;
-  }
-}
-
-async function writeAgentLocal(memory: AgentMemory): Promise<void> {
-  ensureDataDir();
-  const filePath = getAgentFilePath(memory.agentId);
-  fs.writeFileSync(filePath, JSON.stringify(memory, null, 2), "utf-8");
-}
-
-async function listAgentIds(): Promise<string[]> {
-  // Try GitHub first
-  if (GITHUB_TOKEN) {
-    try {
-      const contents = await githubRequest(`/repos/${REPO_OWNER}/${REPO_NAME}/contents/data/agents?ref=${BRANCH}`);
-      return (contents as any[])
-        .filter(f => f.name.endsWith(".json"))
-        .map(f => f.name.replace(".json", ""));
-    } catch {
-      // Fall through to local
-    }
-  }
-  // Local fallback
-  ensureDataDir();
-  return fs.readdirSync(DATA_DIR)
-    .filter(f => f.endsWith(".json"))
-    .map(f => f.replace(".json", ""));
-}
-
-// Determine if we're in a GitHub Action (has GITHUB_TOKEN and GITHUB_ACTIONS)
-const isGitHubAction = !!process.env.GITHUB_ACTIONS && !!GITHUB_TOKEN;
-const isVercel = process.env.VERCEL === "1";
+const AGENT_KEY = (agentId: string) => `agent:${agentId}`;
+const AGENTS_INDEX_KEY = "agents:index";
 
 async function getAgentMemory(agentId: string): Promise<AgentMemory | null> {
-  // Priority: GitHub Action > Vercel (read from GitHub) > Local
-  if (isGitHubAction || isVercel) {
-    return readAgentFromGitHub(agentId);
-  }
-  return readAgentLocal(agentId);
+  const data = await redis.get(AGENT_KEY(agentId));
+  return data as AgentMemory | null;
 }
 
 async function setAgentMemory(memory: AgentMemory): Promise<void> {
-  if (isGitHubAction || isVercel) {
-    await writeAgentToGitHub(memory);
-  } else {
-    await writeAgentLocal(memory);
-  }
+  await redis.set(AGENT_KEY(memory.agentId), JSON.stringify(memory));
+  await redis.sadd(AGENTS_INDEX_KEY, memory.agentId);
 }
 
 export async function createAgentMemory(personaOverrides?: Partial<PersonaConfig>): Promise<AgentMemory> {
@@ -201,7 +85,7 @@ export async function createAgentMemory(personaOverrides?: Partial<PersonaConfig
   };
 
   await setAgentMemory(memory);
-  console.log(`✅ Agent ${agentId} created (storage: ${isGitHubAction || isVercel ? "GitHub" : "local"})`);
+  console.log(`✅ Agent ${agentId} created (Redis)`);
   return memory;
 }
 
@@ -295,4 +179,7 @@ export async function getAgentConfig(agentId: string): Promise<{ persona: Person
   return { persona: memory.persona, config: memory.config };
 }
 
-export { listAgentIds };
+export async function listAgentIds(): Promise<string[]> {
+  const agents = await redis.smembers(AGENTS_INDEX_KEY);
+  return (agents as string[]) || [];
+}
