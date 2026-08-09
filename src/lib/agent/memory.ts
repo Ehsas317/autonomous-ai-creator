@@ -12,22 +12,34 @@ import {
 import { ARIA_VOSS_PERSONA, AGENT_CONFIG } from "./persona";
 import { generateAgentId, generatePostId, generateTopicId } from "@/lib/utils/id-generator";
 
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-});
+// Lazy-initialized Redis client to avoid build-time errors
+let _redis: Redis | null = null;
+
+function getRedis(): Redis {
+  if (!_redis) {
+    const url = process.env.UPSTASH_REDIS_REST_URL;
+    const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+    if (!url || !token) {
+      throw new Error("UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be set");
+    }
+    _redis = new Redis({ url, token });
+  }
+  return _redis;
+}
 
 const AGENT_KEY = (agentId: string) => `agent:${agentId}`;
 const AGENTS_INDEX_KEY = "agents:index";
 
 async function getAgentMemory(agentId: string): Promise<AgentMemory | null> {
-  const data = await redis.get(AGENT_KEY(agentId));
+  const redis = getRedis();
+  const data = await redis.get(`agent:${agentId}`);
   return data as AgentMemory | null;
 }
 
 async function setAgentMemory(memory: AgentMemory): Promise<void> {
-  await redis.set(AGENT_KEY(memory.agentId), JSON.stringify(memory));
-  await redis.sadd(AGENTS_INDEX_KEY, memory.agentId);
+  const redis = getRedis();
+  await redis.set(`agent:${memory.agentId}`, JSON.stringify(memory));
+  await redis.sadd("agents:index", memory.agentId);
 }
 
 export async function createAgentMemory(personaOverrides?: Partial<PersonaConfig>): Promise<AgentMemory> {
@@ -180,6 +192,7 @@ export async function getAgentConfig(agentId: string): Promise<{ persona: Person
 }
 
 export async function listAgentIds(): Promise<string[]> {
-  const agents = await redis.smembers(AGENTS_INDEX_KEY);
+  const redis = getRedis();
+  const agents = await redis.smembers("agents:index");
   return (agents as string[]) || [];
 }
