@@ -12,10 +12,6 @@ import {
 import { ARIA_VOSS_PERSONA, AGENT_CONFIG } from "./persona";
 import { generateAgentId, generatePostId, generateTopicId } from "@/lib/utils/id-generator";
 
-// In-memory fallback for testing without Redis
-const memoryStore = new Map<string, AgentMemory>();
-const agentsIndex = new Set<string>();
-
 const hasRedis = !!process.env.UPSTASH_REDIS_REST_URL && !!process.env.UPSTASH_REDIS_REST_TOKEN;
 
 const redis = hasRedis ? new Redis({
@@ -26,22 +22,26 @@ const redis = hasRedis ? new Redis({
 const AGENT_KEY = (agentId: string) => `agent:${agentId}`;
 const AGENTS_INDEX_KEY = "agents:index";
 
-async function getAgentMemory(agentId: string): Promise<AgentMemory | null> {
-  if (hasRedis && redis) {
-    const data = await redis.get(AGENT_KEY(agentId));
-    return data as AgentMemory | null;
+function requireRedis(): Redis {
+  if (!hasRedis || !redis) {
+    throw new Error(
+      "Upstash Redis not configured. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN environment variables. " +
+      "Create a free database at https://console.upstash.com"
+    );
   }
-  return memoryStore.get(agentId) || null;
+  return redis;
+}
+
+async function getAgentMemory(agentId: string): Promise<AgentMemory | null> {
+  const client = requireRedis();
+  const data = await client.get(AGENT_KEY(agentId));
+  return data as AgentMemory | null;
 }
 
 async function setAgentMemory(memory: AgentMemory): Promise<void> {
-  if (hasRedis && redis) {
-    await redis.set(AGENT_KEY(memory.agentId), JSON.stringify(memory));
-    await redis.sadd(AGENTS_INDEX_KEY, memory.agentId);
-  } else {
-    memoryStore.set(memory.agentId, memory);
-    agentsIndex.add(memory.agentId);
-  }
+  const client = requireRedis();
+  await client.set(AGENT_KEY(memory.agentId), JSON.stringify(memory));
+  await client.sadd(AGENTS_INDEX_KEY, memory.agentId);
 }
 
 export async function createAgentMemory(personaOverrides?: Partial<PersonaConfig>): Promise<AgentMemory> {
@@ -193,9 +193,7 @@ export async function getAgentConfig(agentId: string): Promise<{ persona: Person
 }
 
 export async function listAgentIds(): Promise<string[]> {
-  if (hasRedis && redis) {
-    const agents = await redis.smembers(AGENTS_INDEX_KEY);
-    return (agents as string[]) || [];
-  }
-  return Array.from(agentsIndex);
+  const client = requireRedis();
+  const agents = await client.smembers(AGENTS_INDEX_KEY);
+  return (agents as string[]) || [];
 }
