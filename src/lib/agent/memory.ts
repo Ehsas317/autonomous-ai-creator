@@ -12,23 +12,36 @@ import {
 import { ARIA_VOSS_PERSONA, AGENT_CONFIG } from "./persona";
 import { generateAgentId, generatePostId, generateTopicId } from "@/lib/utils/id-generator";
 
-const redis = new Redis({
+// In-memory fallback for testing without Redis
+const memoryStore = new Map<string, AgentMemory>();
+const agentsIndex = new Set<string>();
+
+const hasRedis = !!process.env.UPSTASH_REDIS_REST_URL && !!process.env.UPSTASH_REDIS_REST_TOKEN;
+
+const redis = hasRedis ? new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL!,
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-});
+}) : null;
 
 const AGENT_KEY = (agentId: string) => `agent:${agentId}`;
 const AGENTS_INDEX_KEY = "agents:index";
 
 async function getAgentMemory(agentId: string): Promise<AgentMemory | null> {
-  const data = await redis.get(AGENT_KEY(agentId));
-  return data as AgentMemory | null;
+  if (hasRedis && redis) {
+    const data = await redis.get(AGENT_KEY(agentId));
+    return data as AgentMemory | null;
+  }
+  return memoryStore.get(agentId) || null;
 }
 
 async function setAgentMemory(memory: AgentMemory): Promise<void> {
-  await redis.set(AGENT_KEY(memory.agentId), JSON.stringify(memory));
-  // Add to index
-  await redis.sadd(AGENTS_INDEX_KEY, memory.agentId);
+  if (hasRedis && redis) {
+    await redis.set(AGENT_KEY(memory.agentId), JSON.stringify(memory));
+    await redis.sadd(AGENTS_INDEX_KEY, memory.agentId);
+  } else {
+    memoryStore.set(memory.agentId, memory);
+    agentsIndex.add(memory.agentId);
+  }
 }
 
 export async function createAgentMemory(personaOverrides?: Partial<PersonaConfig>): Promise<AgentMemory> {
@@ -180,6 +193,9 @@ export async function getAgentConfig(agentId: string): Promise<{ persona: Person
 }
 
 export async function listAgentIds(): Promise<string[]> {
-  const agents = await redis.smembers(AGENTS_INDEX_KEY);
-  return (agents as string[]) || [];
+  if (hasRedis && redis) {
+    const agents = await redis.smembers(AGENTS_INDEX_KEY);
+    return (agents as string[]) || [];
+  }
+  return Array.from(agentsIndex);
 }
