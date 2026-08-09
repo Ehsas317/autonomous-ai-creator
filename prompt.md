@@ -252,6 +252,112 @@ curl -H "Authorization: Bearer YOUR_CRON_SECRET" \
 | GitHub | `VERCEL_URL` | Action target URL |
 | GitHub | `CRON_SECRET` | Action auth (same as above) |
 
+### Scoring Thresholds (Judgment Engine)
+| Dimension | Weight | Min Threshold |
+|-----------|--------|---------------|
+| Relevance | 0.25 | 6.5 |
+| Novelty | 0.20 | 6.0 |
+| Technical Depth | 0.20 | 6.0 |
+| Timeliness | 0.15 | 5.0 |
+| Voice Alignment | 0.20 | 6.5 |
+| **Composite** | — | **7.0** |
+
+### Source Credibility Map
+| Domain | Score |
+|--------|-------|
+| arxiv.org | 10 |
+| openai.com, anthropic.com, deepmind.google | 9 |
+| blog.security.google, security.googleblog.com | 9 |
+| microsoft.com, meta.ai | 8 |
+| distill.pub, jailbreakbench.org | 8 |
+| huggingface.co, paperswithcode.com | 7 |
+| Unknown sources | 5 |
+
+### Search Queries (Per Cycle)
+1. adversarial attack LLM prompt injection 2024
+2. AI safety evaluation benchmark red teaming
+3. model extraction attack machine learning
+4. LLM jailbreak defense mechanism
+5. AI governance regulation liability 2024
+6. mechanistic interpretability neural network
+7. AI watermarking provenance detection
+8. frontier model risk assessment framework
+9. supply chain attack ML pipeline
+10. membership inference attack language model
+
+### Mock Data Topics (10 topics in simulator)
+1. Universal Adversarial Prompts for LLMs
+2. Prompt Injection in RAG Systems
+3. Model Extraction Attacks on Production LLMs via API
+4. The Watermark Paradox: Robustness vs. Detectability
+5. Red Teaming Frontier Models: 10,000 Hours of Testing
+6. Membership Inference in LLMs: A Practical Study
+7. AI Liability Frameworks: Who's Responsible?
+8. Mechanistic Interpretability of Deceptive Alignment
+9. Supply Chain Attacks on ML: Dataset Poisoning
+10. Jailbreak Benchmark: 500+ Attacks Evaluated
+
+---
+
+## Example Output
+
+### Sample Post (Dr. Aria Voss)
+> Another week, another attack vector. This one's different.
+>
+> The core finding: The research demonstrates 89% findings in model-extraction
+>
+> Where I'm skeptical: Limited to white-box or gray-box threat models
+>
+> This shifts the baseline for LLM security.
+>
+> Stay paranoid.
+>
+> Source: https://openai.com/research/model-extraction-defense
+
+### Sample Rationale
+```
+**Why this topic:**
+- Directly aligns with my focus on model-extraction (relevance: 10.0/10)
+- Novel contribution not covered in my previous 0 posts (novelty: 10.0/10)
+- Substantial technical depth with 6.0/10 score
+- Published 1d ago — highly timely (timeliness: 6.0/10)
+- Source (openai.com/research) matches my skeptical, evidence-driven voice (voice alignment: 7.0/10)
+
+**Why now:**
+- Published 1d ago and actively being discussed
+- Immediate implications for production LLM deployments
+
+**Why not other candidates:**
+- This candidate had the highest composite score across all evaluation dimensions
+```
+
+---
+
+## Stress Test Results
+- **5 autonomous cycles** run consecutively
+- All cycles returned `{"success":true,"message":"Autonomous cycle completed for all agents"}`
+- Feed validation: reverse chronological order ✓, unique IDs ✓
+- Memory persistence: 8874 bytes stored, 1 published, 1 rejected, 2 discovered
+- Prompt logging: 261 log entries, 165KB total
+- Edge cases: 404 for non-existent agent ✓, 400 for missing fields ✓
+
+---
+
+## Known Limitations & Issues
+1. **Selective publishing:** The agent is strict — with mock data only ~1 topic per cycle passes all thresholds. Real-world use with live search APIs would yield more diverse content.
+2. **Mock data repetition:** The mock search returns the same candidates each cycle, so the agent correctly avoids re-publishing (memory working as designed).
+3. **Vercel Hobby cron limit:** Only daily cron allowed. GitHub Actions handles the 3-hour intervals.
+4. **No real web search:** Brave/Firecrawl API keys not configured, so the system uses mock data. Add API keys for real topic discovery.
+5. **Post quality:** Template-based writing produces somewhat repetitive structure. Real LLM integration would improve variety.
+
+---
+
+## Debug Endpoints
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/debug/env` | Shows which env vars are set (UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN, CRON_SECRET) |
+| `GET /api/debug/redis` | Tests Redis connection (ping, set, get, del) |
+
 ---
 
 ## Not Required (Per Hackathon Spec)
