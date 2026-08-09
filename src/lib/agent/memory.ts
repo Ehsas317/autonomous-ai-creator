@@ -13,9 +13,10 @@ import {
 import { ARIA_VOSS_PERSONA, AGENT_CONFIG } from "./persona";
 import { generateAgentId, generatePostId, generateTopicId } from "@/lib/utils/id-generator";
 
-const isVercel = !!process.env.VERCEL;
+// Detect environment at module load time
+const isVercelEnv = process.env.VERCEL === "1" || process.env.VERCEL_ENV === "production";
 const hasRedis = !!process.env.UPSTASH_REDIS_REST_URL && !!process.env.UPSTASH_REDIS_REST_TOKEN;
-const isDemoMode = isVercel && !hasRedis;
+const isDemoMode = isVercelEnv && !hasRedis;
 
 // In-memory store for demo mode (doesn't persist between invocations)
 const demoMemoryStore = new Map<string, AgentMemory>();
@@ -42,13 +43,18 @@ async function getAgentMemory(agentId: string): Promise<AgentMemory | null> {
   
   // Redis mode
   if (hasRedis) {
-    const { Redis } = await import("@upstash/redis");
-    const redis = new Redis({
-      url: process.env.UPSTASH_REDIS_REST_URL!,
-      token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-    });
-    const data = await redis.get(`agent:${agentId}`);
-    return data as AgentMemory | null;
+    try {
+      const { Redis } = await import("@upstash/redis");
+      const redis = new Redis({
+        url: process.env.UPSTASH_REDIS_REST_URL!,
+        token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+      });
+      const data = await redis.get(`agent:${agentId}`);
+      return data as AgentMemory | null;
+    } catch (e) {
+      console.error("Redis error:", e);
+      // Fall through to demo mode
+    }
   }
   
   // Local file-based mode
@@ -73,14 +79,19 @@ async function setAgentMemory(memory: AgentMemory): Promise<void> {
   
   // Redis mode
   if (hasRedis) {
-    const { Redis } = await import("@upstash/redis");
-    const redis = new Redis({
-      url: process.env.UPSTASH_REDIS_REST_URL!,
-      token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-    });
-    await redis.set(`agent:${memory.agentId}`, JSON.stringify(memory));
-    await redis.sadd("agents:index", memory.agentId);
-    return;
+    try {
+      const { Redis } = await import("@upstash/redis");
+      const redis = new Redis({
+        url: process.env.UPSTASH_REDIS_REST_URL!,
+        token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+      });
+      await redis.set(`agent:${memory.agentId}`, JSON.stringify(memory));
+      await redis.sadd("agents:index", memory.agentId);
+      return;
+    } catch (e) {
+      console.error("Redis error:", e);
+      // Fall through to demo mode
+    }
   }
   
   // Local file-based mode
@@ -95,13 +106,17 @@ async function listAgentIds(): Promise<string[]> {
   }
   
   if (hasRedis) {
-    const { Redis } = await import("@upstash/redis");
-    const redis = new Redis({
-      url: process.env.UPSTASH_REDIS_REST_URL!,
-      token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-    });
-    const agents = await redis.smembers("agents:index");
-    return (agents as string[]) || [];
+    try {
+      const { Redis } = await import("@upstash/redis");
+      const redis = new Redis({
+        url: process.env.UPSTASH_REDIS_REST_URL!,
+        token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+      });
+      const agents = await redis.smembers("agents:index");
+      return (agents as string[]) || [];
+    } catch (e) {
+      console.error("Redis error:", e);
+    }
   }
   
   ensureDataDir();
