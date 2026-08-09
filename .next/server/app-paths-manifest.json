@@ -1,0 +1,4 @@
+{
+  "/api/agent/feed/route": "app/api/agent/feed/route.js",
+  "/api/agent/init/route": "app/api/agent/init/route.js"
+}
